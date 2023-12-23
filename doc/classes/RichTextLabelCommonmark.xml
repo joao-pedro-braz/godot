@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="RichTextLabelCommonmark" inherits="RichTextLabel" version="4.0">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="append_commonmark">
+			<return type="int" enum="Error" />
+			<argument index="0" name="commonmark" type="String" />
+			<description>
+			</description>
+		</method>
+		<method name="parse_commonmark">
+			<return type="int" enum="Error" />
+			<argument index="0" name="commonmark" type="String" />
+			<description>
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="commonmark_enabled" type="bool" setter="set_use_commonmark" getter="is_using_commonmark" default="false">
+		</member>
+		<member name="commonmark_text" type="String" setter="set_commonmark" getter="get_commonmark" default="&quot;&quot;">
+		</member>
+	</members>
+</class>
