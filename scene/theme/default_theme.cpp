@@ -42,7 +42,7 @@
 #include "scene/theme/theme_db.h"
 #include "servers/text_server.h"
 
-#include "modules/modules_enabled.gen.h" // For svg.
+#include "modules/modules_enabled.gen.h" // For svg and cmark.
 #ifdef MODULE_SVG_ENABLED
 #include "modules/svg/image_loader_svg.h"
 #endif
@@ -1107,6 +1107,16 @@ void fill_default_theme(Ref<Theme> &theme, const Ref<Font> &default_font, const 
 
 	theme->set_constant("text_highlight_h_padding", "RichTextLabel", Math::round(3 * scale));
 	theme->set_constant("text_highlight_v_padding", "RichTextLabel", Math::round(3 * scale));
+
+#ifdef MODULE_CMARK_ENABLED
+	theme->set_font("heading", "RichTextLabel", bold_font);
+	theme->set_font_size("first_heading_font_size", "RichTextLabel", 32);
+	theme->set_font_size("second_heading_font_size", "RichTextLabel", 24);
+	theme->set_font_size("third_heading_font_size", "RichTextLabel", 19);
+	theme->set_font_size("fourth_heading_font_size", "RichTextLabel", 16);
+	theme->set_font_size("fifth_heading_font_size", "RichTextLabel", 13);
+	theme->set_font_size("sixth_heading_font_size", "RichTextLabel", 11);
+#endif
 
 	// Containers
 

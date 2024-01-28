@@ -29,6 +29,13 @@
 /**************************************************************************/
 
 #include "rich_text_label.h"
+#include "core/error/error_macros.h"
+#include "core/object/class_db.h"
+#include "core/object/object.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/pair.h"
+#include "core/variant/type_info.h"
+#include "core/variant/variant.h"
 #include "rich_text_label.compat.inc"
 
 #include "core/input/input_map.h"
@@ -42,10 +49,18 @@
 #include "scene/scene_string_names.h"
 #include "scene/theme/theme_db.h"
 #include "servers/display_server.h"
+#include <cstdint>
 
-#include "modules/modules_enabled.gen.h" // For regex.
 #ifdef MODULE_REGEX_ENABLED
 #include "modules/regex/regex.h"
+#endif
+
+#define RENDER_MODE_HINT_STRING "Plain Text, BBCode"
+
+#ifdef MODULE_CMARK_ENABLED
+#include "modules/cmark/markdown.h"
+#undef RENDER_MODE_HINT_STRING
+#define RENDER_MODE_HINT_STRING "Plain Text, BBCode, Markdown" // include Markdown as a valid option
 #endif
 
 RichTextLabel::ItemCustomFX::ItemCustomFX() {
@@ -318,6 +333,9 @@ float RichTextLabel::_resize_line(ItemFrame *p_frame, int p_line, const Ref<Font
 					table->columns[i].width = 0;
 				}
 
+				// Compute minimum width for each cell.
+				const int available_width = p_width - theme_cache.table_h_separation * (col_count - 1);
+
 				int idx = 0;
 				for (Item *E : table->subitems) {
 					ERR_CONTINUE(E->type != ITEM_FRAME); // Children should all be frames.
@@ -326,13 +344,10 @@ float RichTextLabel::_resize_line(ItemFrame *p_frame, int p_line, const Ref<Font
 					for (int i = 0; i < (int)frame->lines.size(); i++) {
 						MutexLock sub_lock(frame->lines[i].text_buf->get_mutex());
 						int w = _find_margin(frame->lines[i].from, p_base_font, p_base_font_size) + 1;
-						prev_h = _resize_line(frame, i, p_base_font, p_base_font_size, w, prev_h);
+						prev_h = _resize_line(frame, i, p_base_font, p_base_font_size, available_width - w, prev_h);
 					}
 					idx++;
 				}
-
-				// Compute minimum width for each cell.
-				const int available_width = p_width - theme_cache.table_h_separation * (col_count - 1);
 
 				// Compute available width and total ratio (for expanders).
 				int total_ratio = 0;
@@ -618,7 +633,7 @@ float RichTextLabel::_shape_line(ItemFrame *p_frame, int p_line, const Ref<Font>
 
 						int char_offset = l.char_offset + l.char_count;
 						int w = _find_margin(frame->lines[i].from, p_base_font, p_base_font_size) + 1;
-						prev_h = _shape_line(frame, i, p_base_font, p_base_font_size, w, prev_h, &char_offset);
+						prev_h = _shape_line(frame, i, p_base_font, p_base_font_size, available_width - w, prev_h, &char_offset);
 						int cell_ch = (char_offset - (l.char_offset + l.char_count));
 						l.char_count += cell_ch;
 						t_char_count += cell_ch;
@@ -4000,6 +4015,13 @@ void RichTextLabel::append_text(const String &p_bbcode) {
 	_stop_thread();
 	MutexLock data_lock(data_mutex);
 
+#ifdef MODULE_CMARK_ENABLED
+	if (render_mode == MARKDOWN) {
+		Markdown::parse_string(p_bbcode, get_markdown_options())->render_into(this);
+		return;
+	}
+#endif
+
 	int pos = 0;
 
 	List<String> tag_stack;
@@ -5578,11 +5600,42 @@ void RichTextLabel::set_text(const String &p_bbcode) {
 
 void RichTextLabel::_apply_translation() {
 	String xl_text = atr(text);
-	if (use_bbcode) {
+	if (render_mode == RenderMode::BBCODE) {
 		parse_bbcode(xl_text);
+#ifdef MODULE_CMARK_ENABLED
+	} else if (render_mode == MARKDOWN) {
+		clear();
+		_markdown->parse(xl_text)->render_into(this);
+#endif
 	} else { // raw text
 		clear();
 		add_text(xl_text);
+	}
+}
+
+void RichTextLabel::_validate_property(PropertyInfo &p_property) const {
+	// Account for Markup related properties
+	if (p_property.name == "custom_effects" || p_property.name == "meta_underlined" || p_property.name == "hint_underlined") {
+		switch (render_mode) {
+			case PLAIN_TEXT: {
+				// Plain Text doesn't require Markup, so hide it.
+				p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+			} break;
+			case BBCODE: {
+				// BBCode requires Markup, so show it.
+				p_property.usage &= ~PROPERTY_USAGE_NO_EDITOR;
+			} break;
+#ifdef MODULE_CMARK_ENABLED
+			case MARKDOWN: {
+				// Markdown doesn't require Markup, so hide it.
+				p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+			} break;
+#endif
+		}
+	} else if (p_property.name.begins_with("markdown")) {
+		if (render_mode != MARKDOWN) {
+			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+		}
 	}
 }
 
@@ -5590,18 +5643,29 @@ String RichTextLabel::get_text() const {
 	return text;
 }
 
-void RichTextLabel::set_use_bbcode(bool p_enable) {
-	if (use_bbcode == p_enable) {
+void RichTextLabel::set_render_mode(RenderMode p_render_mode) {
+	if (p_render_mode == render_mode) {
 		return;
 	}
-	use_bbcode = p_enable;
+	render_mode = p_render_mode;
 	notify_property_list_changed();
-
 	_apply_translation();
 }
 
+RichTextLabel::RenderMode RichTextLabel::get_render_mode() const {
+	return render_mode;
+}
+
+void RichTextLabel::set_use_bbcode(bool p_enable) {
+	return set_render_mode(BBCODE);
+}
+
 bool RichTextLabel::is_using_bbcode() const {
-	return use_bbcode;
+#ifdef MODULE_CMARK_ENABLED
+	return render_mode != PLAIN_TEXT;
+#else
+	return render_mode == BBCODE;
+#endif
 }
 
 String RichTextLabel::get_parsed_text() const {
@@ -5731,7 +5795,7 @@ float RichTextLabel::get_visible_ratio() const {
 
 void RichTextLabel::set_effects(Array p_effects) {
 	custom_effects = p_effects;
-	if ((!text.is_empty()) && use_bbcode) {
+	if ((!text.is_empty()) && render_mode == BBCODE) {
 		parse_bbcode(atr(text));
 	}
 }
@@ -5746,7 +5810,7 @@ void RichTextLabel::install_effect(const Variant effect) {
 
 	ERR_FAIL_COND_MSG(rteffect.is_null(), "Invalid RichTextEffect resource.");
 	custom_effects.push_back(effect);
-	if ((!text.is_empty()) && use_bbcode) {
+	if ((!text.is_empty()) && render_mode == BBCODE) {
 		parse_bbcode(atr(text));
 	}
 }
@@ -5923,6 +5987,9 @@ void RichTextLabel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_use_bbcode", "enable"), &RichTextLabel::set_use_bbcode);
 	ClassDB::bind_method(D_METHOD("is_using_bbcode"), &RichTextLabel::is_using_bbcode);
 
+	ClassDB::bind_method(D_METHOD("set_render_mode", "render_mode"), &RichTextLabel::set_render_mode);
+	ClassDB::bind_method(D_METHOD("get_render_mode"), &RichTextLabel::get_render_mode);
+
 	ClassDB::bind_method(D_METHOD("get_line_count"), &RichTextLabel::get_line_count);
 	ClassDB::bind_method(D_METHOD("get_visible_line_count"), &RichTextLabel::get_visible_line_count);
 
@@ -5947,13 +6014,20 @@ void RichTextLabel::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("_thread_end"), &RichTextLabel::_thread_end);
 
+#ifdef MODULE_CMARK_ENABLED
+	ClassDB::bind_method(D_METHOD("set_markdown_options", "options"), &RichTextLabel::set_markdown_options);
+	ClassDB::bind_method(D_METHOD("get_markdown_options"), &RichTextLabel::get_markdown_options);
+#endif
+
 #ifndef DISABLE_DEPRECATED
 	ClassDB::bind_compatibility_method(D_METHOD("push_font", "font", "font_size"), &RichTextLabel::push_font);
 	ClassDB::bind_compatibility_method(D_METHOD("set_table_column_expand", "column", "expand", "ratio"), &RichTextLabel::set_table_column_expand);
 #endif // DISABLE_DEPRECATED
 
-	// Note: set "bbcode_enabled" first, to avoid unnecessary "text" resets.
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bbcode_enabled"), "set_use_bbcode", "is_using_bbcode");
+	// Note: set "render_mode" first, to avoid unnecessary "text" resets.
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "render_mode", PROPERTY_HINT_ENUM, RENDER_MODE_HINT_STRING), "set_render_mode", "get_render_mode");
+	// Removed in favor of "render_mode":
+	// ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bbcode_enabled"), "set_use_bbcode", "is_using_bbcode");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "text", PROPERTY_HINT_MULTILINE_TEXT), "set_text", "get_text");
 
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fit_content"), "set_fit_content", "is_fit_content_enabled");
@@ -5963,6 +6037,11 @@ void RichTextLabel::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "tab_size", PROPERTY_HINT_RANGE, "0,24,1"), "set_tab_size", "get_tab_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "context_menu_enabled"), "set_context_menu_enabled", "is_context_menu_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shortcut_keys_enabled"), "set_shortcut_keys_enabled", "is_shortcut_keys_enabled");
+
+#ifdef MODULE_CMARK_ENABLED
+	ADD_GROUP("Markdown", "markdown");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "markdown_options", PROPERTY_HINT_FLAGS, "Keep Text,Soft break as Hard break,Parse Footnotes"), "set_markdown_options", "get_markdown_options");
+#endif
 
 	ADD_GROUP("Markup", "");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "custom_effects", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("RichTextEffect"), (PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SCRIPT_VARIABLE)), "set_effects", "get_effects");
@@ -6051,6 +6130,16 @@ void RichTextLabel::_bind_methods() {
 	BIND_THEME_ITEM(Theme::DATA_TYPE_COLOR, RichTextLabel, table_odd_row_bg);
 	BIND_THEME_ITEM(Theme::DATA_TYPE_COLOR, RichTextLabel, table_even_row_bg);
 	BIND_THEME_ITEM(Theme::DATA_TYPE_COLOR, RichTextLabel, table_border);
+
+#ifdef MODULE_CMARK_ENABLED
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT, RichTextLabel, heading_font);
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT_SIZE, RichTextLabel, first_heading_font_size);
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT_SIZE, RichTextLabel, second_heading_font_size);
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT_SIZE, RichTextLabel, third_heading_font_size);
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT_SIZE, RichTextLabel, fourth_heading_font_size);
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT_SIZE, RichTextLabel, fifth_heading_font_size);
+	BIND_THEME_ITEM(Theme::DATA_TYPE_FONT_SIZE, RichTextLabel, sixth_heading_font_size);
+#endif
 }
 
 TextServer::VisibleCharactersBehavior RichTextLabel::get_visible_characters_behavior() const {
@@ -6187,6 +6276,21 @@ Size2 RichTextLabel::get_minimum_size() const {
 	return sb_min_size +
 			((autowrap_mode != TextServer::AUTOWRAP_OFF) ? Size2(1, min_size.height) : min_size);
 }
+
+#ifdef MODULE_CMARK_ENABLED
+void RichTextLabel::set_markdown_options(BitField<Markdown::OptionsMask> p_options) {
+	_markdown->set_options(p_options);
+
+	if (render_mode == MARKDOWN) {
+		clear();
+		_markdown->render_into(this);
+	}
+}
+
+BitField<Markdown::OptionsMask> RichTextLabel::get_markdown_options() {
+	return _markdown->get_options();
+}
+#endif
 
 // Context menu.
 void RichTextLabel::_generate_context_menu() {
@@ -6413,6 +6517,10 @@ RichTextLabel::RichTextLabel(const String &p_text) {
 	stop_thread.store(false);
 
 	set_clip_contents(true);
+
+#ifdef MODULE_CMARK_ENABLED
+	_markdown = Ref<Markdown>(memnew(Markdown));
+#endif
 }
 
 RichTextLabel::~RichTextLabel() {

@@ -32,15 +32,26 @@
 #define RICH_TEXT_LABEL_H
 
 #include "core/object/worker_thread_pool.h"
+#include "core/variant/type_info.h"
 #include "scene/gui/popup_menu.h"
 #include "scene/gui/scroll_bar.h"
 #include "scene/resources/text_paragraph.h"
+
+#include "modules/modules_enabled.gen.h" // For regex and cmark.
+
+#ifdef MODULE_CMARK_ENABLED
+#include "modules/cmark/markdown.h"
+#endif
 
 class CharFXTransform;
 class RichTextEffect;
 
 class RichTextLabel : public Control {
 	GDCLASS(RichTextLabel, Control);
+
+#ifdef MODULE_CMARK_ENABLED
+	friend Markdown;
+#endif
 
 public:
 	enum ListType {
@@ -109,6 +120,14 @@ public:
 		UPDATE_WIDTH_IN_PERCENT = 1 << 7,
 	};
 
+	enum RenderMode {
+		PLAIN_TEXT,
+		BBCODE,
+#ifdef MODULE_CMARK_ENABLED
+		MARKDOWN
+#endif
+	};
+
 protected:
 	virtual void _update_theme_item_cache() override;
 
@@ -119,6 +138,8 @@ protected:
 	void _add_image_bind_compat_80410(const Ref<Texture2D> &p_image, const int p_width, const int p_height, const Color &p_color, InlineAlignment p_alignment, const Rect2 &p_region);
 	static void _bind_compatibility_methods();
 #endif
+
+	void _validate_property(PropertyInfo &p_property) const;
 
 private:
 	struct Item;
@@ -570,7 +591,7 @@ private:
 
 	void _draw_fbg_boxes(RID p_ci, RID p_rid, Vector2 line_off, Item *it_from, Item *it_to, int start, int end, int fbg_flag);
 
-	bool use_bbcode = false;
+	RenderMode render_mode = RenderMode::PLAIN_TEXT;
 	String text;
 	void _apply_translation();
 
@@ -616,8 +637,34 @@ private:
 		Color table_even_row_bg;
 		Color table_border;
 
+#ifdef MODULE_CMARK_ENABLED
+		// Heading
+		Ref<Font> heading_font;
+		Color heading_color;
+		int first_heading_font_size;
+		int second_heading_font_size;
+		int third_heading_font_size;
+		int fourth_heading_font_size;
+		int fifth_heading_font_size;
+		int sixth_heading_font_size;
+
+		Ref<Font> footnote_font;
+		Color footnote_color;
+		int footnote_reference_font_size;
+		int footnote_definition_font_size;
+
+		Color block_quote_bg;
+		Color block_quote_border;
+		Color thematic_break;
+		Color code_block_bg;
+#endif
+
 		float base_scale = 1.0;
 	} theme_cache;
+
+#ifdef MODULE_CMARK_ENABLED
+	Ref<Markdown> _markdown;
+#endif
 
 public:
 #ifndef DISABLE_DEPRECATED
@@ -758,7 +805,12 @@ public:
 	void parse_bbcode(const String &p_bbcode);
 	void append_text(const String &p_bbcode);
 
+	void set_render_mode(RenderMode p_render_mode);
+	RenderMode get_render_mode() const;
+
+	// Deprecated: Kept for compatibility reasons, use set_render_mode(BBCODE).
 	void set_use_bbcode(bool p_enable);
+	// Deprecated: Kept for compatibility reasons, use get_render_mode() == BBCODE.
 	bool is_using_bbcode() const;
 
 	virtual void set_text(const String &p_bbcode);
@@ -799,12 +851,18 @@ public:
 
 	virtual Size2 get_minimum_size() const override;
 
+#ifdef MODULE_CMARK_ENABLED
+	void set_markdown_options(BitField<Markdown::OptionsMask> p_options);
+	BitField<Markdown::OptionsMask> get_markdown_options();
+#endif
+
 	RichTextLabel(const String &p_text = String());
 	~RichTextLabel();
 };
 
 VARIANT_ENUM_CAST(RichTextLabel::ListType);
 VARIANT_ENUM_CAST(RichTextLabel::MenuItems);
+VARIANT_ENUM_CAST(RichTextLabel::RenderMode);
 VARIANT_BITFIELD_CAST(RichTextLabel::ImageUpdateMask);
 
 #endif // RICH_TEXT_LABEL_H

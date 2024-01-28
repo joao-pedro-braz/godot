@@ -43,6 +43,7 @@
 #include "editor/gui/editor_file_dialog.h"
 #include "editor/project_settings_editor.h"
 #include "scene/gui/menu_button.h"
+#include "scene/gui/rich_text_label.h"
 #include "scene/resources/image_texture.h"
 
 static inline void setup_http_request(HTTPRequest *request) {
@@ -297,6 +298,7 @@ EditorAssetLibraryItemDescription::EditorAssetLibraryItemDescription() {
 	description->set_v_size_flags(Control::SIZE_EXPAND_FILL);
 	description->connect("meta_clicked", callable_mp(this, &EditorAssetLibraryItemDescription::_link_click));
 	description->add_theme_constant_override("line_separation", Math::round(5 * EDSCALE));
+	description->set_render_mode(RichTextLabel::MARKDOWN);
 
 	VBoxContainer *previews_vbox = memnew(VBoxContainer);
 	hbox->add_child(previews_vbox);
